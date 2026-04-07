@@ -65,6 +65,26 @@ python3 ssh_watch.py --top
 | `↑` / `↓` | Scroll host list |
 | `Home` / `End` | Jump to top / bottom |
 
+### macOS notifications
+
+Add `--notify` to get native macOS banners automatically:
+
+- **Down alert**: fires once when a host fails **10 consecutive probes** in a row
+- **Recovery alert**: fires once when that host comes back up
+
+```bash
+python3 ssh_watch.py --top --notify
+```
+
+Raise or lower the threshold with `--notify-fail-streak N` (default: 10):
+
+```bash
+# Alert after 3 consecutive failures
+python3 ssh_watch.py --top --notify --notify-fail-streak 3
+```
+
+> Notifications use `osascript` and require macOS notification permissions for Terminal / iTerm.
+
 ### Batch mode (single pass, for scripts)
 
 ```bash
@@ -85,6 +105,8 @@ Exit code is `0` if all hosts are up, `1` if any are down.
 | `--connect-timeout SEC` | `5` | SSH `ConnectTimeout` |
 | `--timeout SEC` | `25` | Hard subprocess timeout |
 | `--command CMD` | `true` | Remote command to run (default is instant) |
+| `--notify` | off | Enable macOS notifications |
+| `--notify-fail-streak N` | `10` | Consecutive fails before down alert |
 
 ### Examples
 

@@ -11,6 +11,7 @@ import curses
 import os
 import queue
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -20,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def expand_path(p: str, base_dir: Path | None = None) -> Path:
@@ -202,6 +203,32 @@ class HostRow:
     msg: str = ""
     history: deque[tuple[bool, float | None]] = field(default_factory=lambda: deque(maxlen=48))
     round_tag: int = 0
+    fail_streak: int = 0
+    alerted_down: bool = False
+
+
+def send_macos_notification(title: str, message: str, subtitle: str = "ssh-watch") -> None:
+    """
+    Send native macOS notification via osascript.
+    Silently ignore failures to avoid breaking monitoring flow.
+    """
+    script = (
+        "display notification "
+        f"{shlex.quote(message)} "
+        f"with title {shlex.quote(title)} "
+        f"subtitle {shlex.quote(subtitle)}"
+    )
+    try:
+        subprocess.run(
+            ["osascript", "-e", script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=2,
+        )
+    except OSError:
+        pass
 
 
 def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace) -> None:
@@ -296,6 +323,26 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                     row.msg = msg
                     row.round_tag = round_id
                     row.history.append((ok, lat_ms))
+                    if ok:
+                        row.fail_streak = 0
+                        if row.alerted_down and args.notify:
+                            send_macos_notification(
+                                "SSH recovered",
+                                f"{h} is reachable again",
+                            )
+                        row.alerted_down = False
+                    else:
+                        row.fail_streak += 1
+                        if (
+                            args.notify
+                            and row.fail_streak >= args.notify_fail_streak
+                            and not row.alerted_down
+                        ):
+                            send_macos_notification(
+                                "SSH unreachable",
+                                f"{h} failed {row.fail_streak} times in a row",
+                            )
+                            row.alerted_down = True
             h_max, w_max = stdscr.getmaxyx()
             stdscr.erase()
 
@@ -506,6 +553,18 @@ def main() -> int:
         default=8.0,
         metavar="SEC",
         help="Seconds between probe rounds in --top (default: 8)",
+    )
+    ap.add_argument(
+        "--notify",
+        action="store_true",
+        help="macOS notification in --top mode when fail streak threshold is crossed and on recovery",
+    )
+    ap.add_argument(
+        "--notify-fail-streak",
+        type=int,
+        default=10,
+        metavar="N",
+        help="Consecutive failures required before down notification (default: 10)",
     )
     args = ap.parse_args()
     cfg = args.config or default_config_path()
