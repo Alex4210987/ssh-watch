@@ -11,7 +11,6 @@ import curses
 import os
 import queue
 import re
-import shlex
 import subprocess
 import sys
 import threading
@@ -207,28 +206,42 @@ class HostRow:
     alerted_down: bool = False
 
 
-def send_macos_notification(title: str, message: str, subtitle: str = "ssh-watch") -> None:
-    """
-    Send native macOS notification via osascript.
-    Silently ignore failures to avoid breaking monitoring flow.
-    """
+def _as_str(s: str) -> str:
+    """Wrap a string in AppleScript double-quoted literal."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def send_macos_notification(
+    title: str,
+    message: str,
+    subtitle: str = "ssh-watch",
+    debug: bool = False,
+) -> bool:
+    """Send native macOS notification via osascript; return True if command succeeded."""
     script = (
-        "display notification "
-        f"{shlex.quote(message)} "
-        f"with title {shlex.quote(title)} "
-        f"subtitle {shlex.quote(subtitle)}"
+        f"display notification {_as_str(message)} "
+        f"with title {_as_str(title)} "
+        f"subtitle {_as_str(subtitle)}"
     )
     try:
-        subprocess.run(
+        res = subprocess.run(
             ["osascript", "-e", script],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if debug else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if debug else subprocess.DEVNULL,
+            text=True,
             check=False,
-            timeout=2,
+            timeout=3,
         )
+        if debug and res.returncode != 0:
+            err = (res.stderr or "").strip()
+            if err:
+                print(f"[notify] osascript failed: {err}", file=sys.stderr)
+        return res.returncode == 0
     except OSError:
-        pass
+        if debug:
+            print("[notify] osascript not available on this system", file=sys.stderr)
+        return False
 
 
 def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace) -> None:
@@ -259,6 +272,14 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
     sort_fail_first = True
     round_id = 0
     last_summary = (0, 0, 0.0)  # ok, fail, t_done
+    notify_count = 0
+    notify_ok = False
+    if args.notify:
+        notify_ok = send_macos_notification(
+            "ssh-watch started",
+            f"Monitoring {len(hosts)} hosts (threshold={args.notify_fail_streak})",
+            debug=args.notify_debug,
+        )
 
     def one_round() -> None:
         nonlocal round_id, last_summary
@@ -326,10 +347,13 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                     if ok:
                         row.fail_streak = 0
                         if row.alerted_down and args.notify:
-                            send_macos_notification(
+                            sent = send_macos_notification(
                                 "SSH recovered",
                                 f"{h} is reachable again",
+                                debug=args.notify_debug,
                             )
+                            if sent:
+                                notify_count += 1
                         row.alerted_down = False
                     else:
                         row.fail_streak += 1
@@ -338,10 +362,13 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                             and row.fail_streak >= args.notify_fail_streak
                             and not row.alerted_down
                         ):
-                            send_macos_notification(
+                            sent = send_macos_notification(
                                 "SSH unreachable",
                                 f"{h} failed {row.fail_streak} times in a row",
+                                debug=args.notify_debug,
                             )
+                            if sent:
+                                notify_count += 1
                             row.alerted_down = True
             h_max, w_max = stdscr.getmaxyx()
             stdscr.erase()
@@ -425,7 +452,11 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                         except curses.error:
                             pass
 
-            foot = f" {scroll + 1}-{min(scroll + avail, total_rows)}/{total_rows} hosts  │  fail-first: {sort_fail_first}"
+            foot = (
+                f" {scroll + 1}-{min(scroll + avail, total_rows)}/{total_rows} hosts"
+                f"  │  fail-first: {sort_fail_first}"
+                f"  │  notify: {args.notify}({notify_ok}) sent={notify_count}"
+            )
             try:
                 stdscr.addstr(h_max - 1, 0, foot[: w_max - 1], A_DIM)
             except curses.error:
@@ -565,6 +596,11 @@ def main() -> int:
         default=10,
         metavar="N",
         help="Consecutive failures required before down notification (default: 10)",
+    )
+    ap.add_argument(
+        "--notify-debug",
+        action="store_true",
+        help="Print notification command errors to stderr (for troubleshooting)",
     )
     args = ap.parse_args()
     cfg = args.config or default_config_path()
