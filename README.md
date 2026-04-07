@@ -70,7 +70,7 @@ python3 ssh_watch.py --top
 
 Add `--notify` to get native macOS banners automatically:
 
-- **Down alert**: fires every time fail streak hits another multiple of `N` (`N`, `2N`, `3N`...)
+- **Down alert**: uses progressive backoff, default thresholds are `N`, `2N`, `4N`, `8N`...
 - **Recovery alert**: fires once when a host recovers after reaching at least `N` consecutive failures
 
 ```bash
@@ -82,6 +82,13 @@ Raise or lower the threshold with `--notify-fail-streak N` (default: 10):
 ```bash
 # Alert after 3 consecutive failures
 python3 ssh_watch.py --top --notify --notify-fail-streak 3
+```
+
+Tune the backoff multiplier (default `2.0`) with `--notify-backoff`:
+
+```bash
+# Thresholds: 3, 6, 12, 24...
+python3 ssh_watch.py --top --notify --notify-fail-streak 3 --notify-backoff 2
 ```
 
 > Notifications use `terminal-notifier` first (with `osascript` fallback on macOS).
@@ -108,6 +115,7 @@ Exit code is `0` if all hosts are up, `1` if any are down.
 | `--command CMD` | `true` | Remote command to run (default is instant) |
 | `--notify` | off | Enable macOS notifications |
 | `--notify-fail-streak N` | `10` | Consecutive fails before down alert |
+| `--notify-backoff K` | `2.0` | Growth multiplier for next fail alert interval |
 
 ### Examples
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import curses
+import math
 import os
 import queue
 import re
@@ -204,6 +205,8 @@ class HostRow:
     round_tag: int = 0
     fail_streak: int = 0
     state_since_ts: float | None = None
+    next_notify_fail_at: int = 0
+    next_notify_gap: int = 0
 
 
 def _as_str(s: str) -> str:
@@ -308,7 +311,13 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
     A_S_UP = curses.color_pair(1) if curses.has_colors() else 0
     A_S_DOWN = curses.color_pair(2) if curses.has_colors() else 0
 
-    rows: dict[str, HostRow] = {h: HostRow() for h in hosts}
+    rows: dict[str, HostRow] = {
+        h: HostRow(
+            next_notify_fail_at=max(1, args.notify_fail_streak),
+            next_notify_gap=max(1, args.notify_fail_streak),
+        )
+        for h in hosts
+    }
     result_q: queue.Queue[dict[str, tuple[bool, float | None, str]]] = queue.Queue()
     stop_ev = threading.Event()
     refresh_ev = threading.Event()
@@ -320,7 +329,10 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
     if args.notify:
         notify_ok = send_macos_notification(
             "ssh-watch started",
-            f"Monitoring {len(hosts)} hosts (threshold={args.notify_fail_streak})",
+            (
+                f"Monitoring {len(hosts)} hosts "
+                f"(threshold={args.notify_fail_streak}, backoff x{args.notify_backoff:.2g})"
+            ),
             debug=args.notify_debug,
         )
 
@@ -402,12 +414,14 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                             if sent:
                                 notify_count += 1
                         row.fail_streak = 0
+                        row.next_notify_fail_at = max(1, args.notify_fail_streak)
+                        row.next_notify_gap = max(1, args.notify_fail_streak)
                     else:
                         row.fail_streak += 1
                         if (
                             args.notify
                             and args.notify_fail_streak > 0
-                            and row.fail_streak % args.notify_fail_streak == 0
+                            and row.fail_streak >= row.next_notify_fail_at
                         ):
                             sent = send_macos_notification(
                                 "SSH unreachable",
@@ -416,6 +430,9 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                             )
                             if sent:
                                 notify_count += 1
+                            row.next_notify_fail_at += row.next_notify_gap
+                            grown = int(math.ceil(row.next_notify_gap * args.notify_backoff))
+                            row.next_notify_gap = max(grown, row.next_notify_gap + 1)
             h_max, w_max = stdscr.getmaxyx()
             stdscr.erase()
 
@@ -651,11 +668,21 @@ def main() -> int:
         help="Consecutive failures required before down notification (default: 10)",
     )
     ap.add_argument(
+        "--notify-backoff",
+        type=float,
+        default=2.0,
+        metavar="K",
+        help="Multiplier for next fail-notify interval after each alert (default: 2.0)",
+    )
+    ap.add_argument(
         "--notify-debug",
         action="store_true",
         help="Print notification command errors to stderr (for troubleshooting)",
     )
     args = ap.parse_args()
+    if args.notify_backoff < 1.0:
+        print("--notify-backoff must be >= 1.0", file=sys.stderr)
+        return 2
     cfg = args.config or default_config_path()
     if args.hosts:
         host_list = sorted(set(args.hosts))
