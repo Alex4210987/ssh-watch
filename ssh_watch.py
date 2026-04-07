@@ -217,7 +217,40 @@ def send_macos_notification(
     subtitle: str = "ssh-watch",
     debug: bool = False,
 ) -> bool:
-    """Send native macOS notification via osascript; return True if command succeeded."""
+    """
+    Send a macOS notification.
+    Tries terminal-notifier first (more reliable on Sequoia+), then falls
+    back to osascript display notification.
+    """
+    import shutil
+
+    tn = shutil.which("terminal-notifier")
+    if tn:
+        cmd = [
+            tn,
+            "-title", title,
+            "-subtitle", subtitle,
+            "-message", message,
+            "-sound", "default",
+        ]
+        try:
+            res = subprocess.run(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE if debug else subprocess.DEVNULL,
+                stderr=subprocess.PIPE if debug else subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+            if debug and res.returncode != 0:
+                print(f"[notify] terminal-notifier failed (rc={res.returncode}): {(res.stderr or '').strip()}", file=sys.stderr)
+            return res.returncode == 0
+        except OSError:
+            if debug:
+                print("[notify] terminal-notifier exec failed, falling back", file=sys.stderr)
+
+    # Fallback: osascript
     script = (
         f"display notification {_as_str(message)} "
         f"with title {_as_str(title)} "
@@ -234,13 +267,11 @@ def send_macos_notification(
             timeout=3,
         )
         if debug and res.returncode != 0:
-            err = (res.stderr or "").strip()
-            if err:
-                print(f"[notify] osascript failed: {err}", file=sys.stderr)
+            print(f"[notify] osascript failed: {(res.stderr or '').strip()}", file=sys.stderr)
         return res.returncode == 0
     except OSError:
         if debug:
-            print("[notify] osascript not available on this system", file=sys.stderr)
+            print("[notify] osascript not available", file=sys.stderr)
         return False
 
 
