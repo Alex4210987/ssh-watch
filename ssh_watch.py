@@ -203,7 +203,6 @@ class HostRow:
     history: deque[tuple[bool, float | None]] = field(default_factory=lambda: deque(maxlen=48))
     round_tag: int = 0
     fail_streak: int = 0
-    alerted_down: bool = False
 
 
 def _as_str(s: str) -> str:
@@ -289,8 +288,6 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
         curses.init_pair(3, curses.COLOR_CYAN, -1)
         curses.init_pair(4, curses.COLOR_YELLOW, -1)
 
-    A_UP = curses.color_pair(1) | curses.A_BOLD if curses.has_colors() else curses.A_BOLD
-    A_DOWN = curses.color_pair(2) | curses.A_BOLD if curses.has_colors() else curses.A_BOLD
     A_HEAD = curses.color_pair(3) | curses.A_BOLD if curses.has_colors() else curses.A_BOLD
     A_DIM = curses.color_pair(4) if curses.has_colors() else curses.A_DIM
     A_S_UP = curses.color_pair(1) if curses.has_colors() else 0
@@ -376,8 +373,7 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                     row.round_tag = round_id
                     row.history.append((ok, lat_ms))
                     if ok:
-                        row.fail_streak = 0
-                        if row.alerted_down and args.notify:
+                        if row.fail_streak >= args.notify_fail_streak and args.notify:
                             sent = send_macos_notification(
                                 "SSH recovered",
                                 f"{h} is reachable again",
@@ -385,13 +381,13 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                             )
                             if sent:
                                 notify_count += 1
-                        row.alerted_down = False
+                        row.fail_streak = 0
                     else:
                         row.fail_streak += 1
                         if (
                             args.notify
-                            and row.fail_streak >= args.notify_fail_streak
-                            and not row.alerted_down
+                            and args.notify_fail_streak > 0
+                            and row.fail_streak % args.notify_fail_streak == 0
                         ):
                             sent = send_macos_notification(
                                 "SSH unreachable",
@@ -400,7 +396,6 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                             )
                             if sent:
                                 notify_count += 1
-                            row.alerted_down = True
             h_max, w_max = stdscr.getmaxyx()
             stdscr.erase()
 
