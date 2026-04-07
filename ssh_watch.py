@@ -203,6 +203,7 @@ class HostRow:
     history: deque[tuple[bool, float | None]] = field(default_factory=lambda: deque(maxlen=48))
     round_tag: int = 0
     fail_streak: int = 0
+    state_since_ts: float | None = None
 
 
 def _as_str(s: str) -> str:
@@ -272,6 +273,20 @@ def send_macos_notification(
         if debug:
             print("[notify] osascript not available", file=sys.stderr)
         return False
+
+
+def format_duration_short(seconds: float) -> str:
+    total = max(0, int(seconds))
+    if total < 60:
+        return f"{total}s"
+    mins, sec = divmod(total, 60)
+    if mins < 60:
+        return f"{mins}m{sec:02d}s"
+    hours, mins = divmod(mins, 60)
+    if hours < 24:
+        return f"{hours}h{mins:02d}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d{hours:02d}h"
 
 
 def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace) -> None:
@@ -367,11 +382,16 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                     break
                 for h, (ok, lat_ms, msg) in data.items():
                     row = rows[h]
+                    now_ts = time.time()
+                    prev_ok = row.ok
+                    had_prev = row.round_tag > 0
                     row.ok = ok
                     row.lat_ms = lat_ms
                     row.msg = msg
                     row.round_tag = round_id
                     row.history.append((ok, lat_ms))
+                    if (not had_prev) or (ok != prev_ok):
+                        row.state_since_ts = now_ts
                     if ok:
                         if row.fail_streak >= args.notify_fail_streak and args.notify:
                             sent = send_macos_notification(
@@ -431,8 +451,12 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
             col_host = min(28, max(12, w_max // 4))
             col_st = 4
             col_ms = 7
-            spark_w = max(8, min(28, w_max - col_host - col_st - col_ms - 4))
-            hdr = f"{'HOST':<{col_host}} {'ST':<{col_st}} {'MS':>{col_ms}}  {'HISTORY':<{spark_w}}"
+            col_for = 8
+            spark_w = max(8, min(24, w_max - col_host - col_st - col_ms - col_for - 6))
+            hdr = (
+                f"{'HOST':<{col_host}} {'ST':<{col_st}} {'MS':>{col_ms}} "
+                f"{'FOR':>{col_for}}  {'HISTORY':<{spark_w}}"
+            )
             try:
                 stdscr.addstr(2, 0, hdr[: w_max - 1], A_HEAD)
             except curses.error:
@@ -453,8 +477,11 @@ def run_top_ui(stdscr: curses.window, hosts: list[str], args: argparse.Namespace
                 ms = f"{r.lat_ms:.0f}" if r.lat_ms is not None else "-"
                 if len(ms) > col_ms:
                     ms = ms[: col_ms]
+                dur = "-"
+                if r.state_since_ts is not None:
+                    dur = format_duration_short(time.time() - r.state_since_ts)
                 host_vis = host if len(host) <= col_host else host[: col_host - 1] + "…"
-                line_start = f"{host_vis:<{col_host}} {st:<{col_st}} {ms:>{col_ms}}  "
+                line_start = f"{host_vis:<{col_host}} {st:<{col_st}} {ms:>{col_ms}} {dur:>{col_for}}  "
                 try:
                     stdscr.addstr(y, 0, line_start[: w_max - 1])
                 except curses.error:

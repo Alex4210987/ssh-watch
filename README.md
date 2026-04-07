@@ -7,12 +7,12 @@ A terminal tool for monitoring whether SSH servers in your `~/.ssh/config` can b
 ```text
  ssh-watch │ UP 3/8 ████████░░░░░░ │ 14:23:01 │ last 5.2s
  [q]uit  [r]efresh  [s]ort  [↑↓]scroll  int 8s  │  history ▁▂…█ = latency   × = fail
- HOST                         ST      MS  HISTORY
- devbox                       UP     312  ▃▃▄▃▄▄▃▂▃▃▅▄▃▄▄▄▂▃▂▃▃▄▃▃▄▂▃
- work-gpu                     UP     892  ▅▄▆▅▅▄▆▅▅▄▅▄▄▄▅▅▄▃▄▅▄▆▅▄▅▄▃
- myvm                         UP     145  ▁▁▂▁▂▁▁▂▁▂▁▁▂▂▁▂▁▂▁▁▂▁▁▁▂▁▁
- cancon.hpccube.com           DN     863  ××××××××××××                 Permission denied (publickey)
- 162.105.146.175              DN    5042  ××××××××××××                 Connection timed out
+ HOST                         ST      MS      FOR  HISTORY
+ devbox                       UP     312   23m10s  ▃▃▄▃▄▄▃▂▃▃▅▄▃▄▄▄▂▃▂▃▃▄▃▃▄▂▃
+ work-gpu                     UP     892    2h04m  ▅▄▆▅▅▄▆▅▅▄▅▄▄▄▅▅▄▃▄▅▄▆▅▄▅▄▃
+ myvm                         UP     145   14m52s  ▁▁▂▁▂▁▁▂▁▂▁▁▂▂▁▂▁▂▁▁▂▁▁▁▂▁▁
+ cancon.hpccube.com           DN     863   52m33s  ××××××××××××                 Permission denied (publickey)
+ 162.105.146.175              DN    5042    1d02h  ××××××××××××                 Connection timed out
 ```
 
 ## Features
@@ -20,6 +20,7 @@ A terminal tool for monitoring whether SSH servers in your `~/.ssh/config` can b
 - Reads host aliases from `~/.ssh/config` automatically (follows `Include` directives)
 - Live full-screen dashboard (`--top`) with color: **green** = reachable, **red** = down
 - Sparkline history column: block height ∝ latency, `×` = failed probe
+- `FOR` column shows how long current state (`UP`/`DN`) has been continuous
 - Parallel probing — checks dozens of hosts in seconds
 - Batch mode (no `--top`) for scripts / cron use; non-zero exit if any host is down
 - Zero dependencies — pure Python 3.8+ stdlib
@@ -36,7 +37,7 @@ A terminal tool for monitoring whether SSH servers in your `~/.ssh/config` can b
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ssh-watch.git
+git clone https://github.com/Alex4210987/ssh-watch.git
 cd ssh-watch
 chmod +x ssh_watch.py
 ```
@@ -69,8 +70,8 @@ python3 ssh_watch.py --top
 
 Add `--notify` to get native macOS banners automatically:
 
-- **Down alert**: fires once when a host fails **10 consecutive probes** in a row
-- **Recovery alert**: fires once when that host comes back up
+- **Down alert**: fires every time fail streak hits another multiple of `N` (`N`, `2N`, `3N`...)
+- **Recovery alert**: fires once when a host recovers after reaching at least `N` consecutive failures
 
 ```bash
 python3 ssh_watch.py --top --notify
@@ -83,7 +84,7 @@ Raise or lower the threshold with `--notify-fail-streak N` (default: 10):
 python3 ssh_watch.py --top --notify --notify-fail-streak 3
 ```
 
-> Notifications use `osascript` and require macOS notification permissions for Terminal / iTerm.
+> Notifications use `terminal-notifier` first (with `osascript` fallback on macOS).
 
 ### Batch mode (single pass, for scripts)
 
